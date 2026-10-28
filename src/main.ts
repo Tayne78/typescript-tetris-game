@@ -1,50 +1,39 @@
 import './style.css';
+import {
+  COLUMNS, ROWS, SHAPES, clearLines, collides, createBoard, createPiece, dropInterval, levelForLines,
+  lineClearScore, mergePiece, rotate, shuffledBag,
+} from './logic.ts';
+import type { Piece, PieceType } from './logic.ts';
 
-const COLUMNS = 10;
-const ROWS = 20;
 const CELL = 30;
-
-type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L';
-type Matrix = number[][];
-type Piece = { type: PieceType; matrix: Matrix; x: number; y: number };
-
-const SHAPES: Record<PieceType, Matrix> = {
-  I: [[1, 1, 1, 1]],
-  O: [[1, 1], [1, 1]],
-  T: [[0, 1, 0], [1, 1, 1]],
-  S: [[0, 1, 1], [1, 1, 0]],
-  Z: [[1, 1, 0], [0, 1, 1]],
-  J: [[1, 0, 0], [1, 1, 1]],
-  L: [[0, 0, 1], [1, 1, 1]],
-};
 
 const COLORS: Record<PieceType, [string, string]> = {
   I: ['#39d8ef', '#1199c4'], O: ['#ffd166', '#e89a35'], T: ['#b78aff', '#8053d6'],
   S: ['#63e6a4', '#28aa78'], Z: ['#ff6b85', '#d83c65'], J: ['#5b9cff', '#3864d8'], L: ['#ffad61', '#e5773b'],
 };
 
-const gameCanvas = document.querySelector<HTMLCanvasElement>('#game-canvas');
-const holdCanvas = document.querySelector<HTMLCanvasElement>('#hold-canvas');
-const nextCanvas = document.querySelector<HTMLCanvasElement>('#next-canvas');
-const overlay = document.querySelector<HTMLDivElement>('#overlay');
-const overlayKicker = document.querySelector<HTMLSpanElement>('#overlay-kicker');
-const overlayTitle = document.querySelector<HTMLElement>('#overlay-title');
-const overlayCopy = document.querySelector<HTMLSpanElement>('#overlay-copy');
-const overlayButton = document.querySelector<HTMLButtonElement>('#overlay-button');
-const scoreElement = document.querySelector<HTMLElement>('#score');
-const bestElement = document.querySelector<HTMLElement>('#best');
-const levelElement = document.querySelector<HTMLElement>('#level');
-const linesElement = document.querySelector<HTMLElement>('#lines');
-const holdStatus = document.querySelector<HTMLElement>('#hold-status');
-
-if (!gameCanvas || !holdCanvas || !nextCanvas || !overlay || !overlayKicker || !overlayTitle || !overlayCopy || !overlayButton || !scoreElement || !bestElement || !levelElement || !linesElement || !holdStatus) {
-  throw new Error('The game UI is incomplete.');
+function required<T>(value: T | null, message = 'The game UI is incomplete.'): T {
+  if (value === null) throw new Error(message);
+  return value;
 }
 
-const context = gameCanvas.getContext('2d');
-const holdContext = holdCanvas.getContext('2d');
-const nextContext = nextCanvas.getContext('2d');
-if (!context || !holdContext || !nextContext) throw new Error('Canvas rendering is unavailable.');
+const gameCanvas = required(document.querySelector<HTMLCanvasElement>('#game-canvas'));
+const holdCanvas = required(document.querySelector<HTMLCanvasElement>('#hold-canvas'));
+const nextCanvas = required(document.querySelector<HTMLCanvasElement>('#next-canvas'));
+const overlay = required(document.querySelector<HTMLDivElement>('#overlay'));
+const overlayKicker = required(document.querySelector<HTMLSpanElement>('#overlay-kicker'));
+const overlayTitle = required(document.querySelector<HTMLElement>('#overlay-title'));
+const overlayCopy = required(document.querySelector<HTMLSpanElement>('#overlay-copy'));
+const overlayButton = required(document.querySelector<HTMLButtonElement>('#overlay-button'));
+const scoreElement = required(document.querySelector<HTMLElement>('#score'));
+const bestElement = required(document.querySelector<HTMLElement>('#best'));
+const levelElement = required(document.querySelector<HTMLElement>('#level'));
+const linesElement = required(document.querySelector<HTMLElement>('#lines'));
+const holdStatus = required(document.querySelector<HTMLElement>('#hold-status'));
+
+const context = required(gameCanvas.getContext('2d'), 'Canvas rendering is unavailable.');
+const holdContext = required(holdCanvas.getContext('2d'), 'Canvas rendering is unavailable.');
+const nextContext = required(nextCanvas.getContext('2d'), 'Canvas rendering is unavailable.');
 
 let board = createBoard();
 let bag: PieceType[] = [];
@@ -61,17 +50,8 @@ let gameOver = false;
 let lastDrop = 0;
 let animationFrame = 0;
 
-function createBoard(): (PieceType | null)[][] {
-  return Array.from({ length: ROWS }, () => Array<PieceType | null>(COLUMNS).fill(null));
-}
-
 function refillBag(): void {
-  const types = Object.keys(SHAPES) as PieceType[];
-  for (let i = types.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [types[i], types[j]] = [types[j], types[i]];
-  }
-  bag.push(...types);
+  bag.push(...shuffledBag());
 }
 
 function drawFromBag(): PieceType {
@@ -79,18 +59,8 @@ function drawFromBag(): PieceType {
   return bag.pop()!;
 }
 
-function createPiece(type: PieceType): Piece {
-  const matrix = SHAPES[type].map((row) => [...row]);
-  return { type, matrix, x: Math.floor((COLUMNS - matrix[0].length) / 2), y: 0 };
-}
-
 function collision(piece: Piece, dx = 0, dy = 0, matrix = piece.matrix): boolean {
-  return matrix.some((row, rowIndex) => row.some((value, columnIndex) => {
-    if (!value) return false;
-    const x = piece.x + columnIndex + dx;
-    const y = piece.y + rowIndex + dy;
-    return x < 0 || x >= COLUMNS || y >= ROWS || (y >= 0 && board[y][x] !== null);
-  }));
+  return collides(board, piece, dx, dy, matrix);
 }
 
 function fillUpcoming(): void {
@@ -104,10 +74,6 @@ function spawnNext(): void {
   canHold = true;
   holdStatus.textContent = 'SAVE FOR LATER';
   if (collision(active)) finishGame();
-}
-
-function rotate(matrix: Matrix): Matrix {
-  return matrix[0].map((_, column) => matrix.map((row) => row[column]).reverse());
 }
 
 function rotateActive(): void {
@@ -157,30 +123,14 @@ function hardDrop(): void {
 }
 
 function lockPiece(): void {
-  for (let y = 0; y < active.matrix.length; y++) {
-    for (let x = 0; x < active.matrix[y].length; x++) {
-      if (!active.matrix[y][x]) continue;
-      const boardY = active.y + y;
-      const boardX = active.x + x;
-      if (boardY >= 0) board[boardY][boardX] = active.type;
-    }
-  }
+  mergePiece(board, active);
+  const result = clearLines(board);
+  board = result.board;
 
-  let cleared = 0;
-  board = board.filter((row) => {
-    if (row.every((cell) => cell !== null)) {
-      cleared += 1;
-      return false;
-    }
-    return true;
-  });
-  while (board.length < ROWS) board.unshift(Array<PieceType | null>(COLUMNS).fill(null));
-
-  const rewards = [0, 100, 300, 500, 800];
-  if (cleared > 0) {
-    score += (rewards[cleared] ?? 800) * level;
-    lines += cleared;
-    level = Math.floor(lines / 10) + 1;
+  if (result.cleared > 0) {
+    score += lineClearScore(result.cleared, level);
+    lines += result.cleared;
+    level = levelForLines(lines);
   }
   updateStats();
   spawnNext();
@@ -321,7 +271,7 @@ function drawPreview(ctx: CanvasRenderingContext2D, types: (PieceType | null)[],
 
 function render(time: number): void {
   if (!paused && !gameOver) {
-    const interval = Math.max(90, 800 - (level - 1) * 65);
+    const interval = dropInterval(level);
     if (time - lastDrop >= interval) {
       if (!move(0, 1)) lockPiece();
       lastDrop = time;
